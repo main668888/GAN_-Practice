@@ -1,2 +1,2 @@
-# GAN_-Practice
+# GAN_Practice
 ALL_GAN_Practice
