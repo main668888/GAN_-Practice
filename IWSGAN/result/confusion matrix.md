@@ -1,5 +1,5 @@
-Based on Figure_2, we decided to set the threshold at 0.55.
-The confusion matrix results are as follows.
+# Based on Figure_2, we decided to set the threshold at 0.55.
+# The confusion matrix results are as follows.
 
 TP, FN, TN, FP: 560, 16, 169, 32
 
