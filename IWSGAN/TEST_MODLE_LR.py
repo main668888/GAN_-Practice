@@ -12,8 +12,8 @@ Created on Fri Mar 19 17:38:53 2021
 
 @author: user
 """
+import itertools
 from Generator_data import trainGenerator,test_image
-from keras.layers.merge import _Merge
 from keras.utils.vis_utils import plot_model
 from keras.models import  Model,Sequential
 from keras.layers import Input
@@ -24,13 +24,13 @@ from keras.layers import Lambda,concatenate
 from keras.layers import Layer
 import keras.backend as K
 from keras.optimizers import Adam,RMSprop
-from keras.layers.advanced_activations import LeakyReLU
+from keras.layers import LeakyReLU
 import matplotlib.pyplot as plt
 from pylab import rcParams
 import numpy as np
 from functools import partial
 from keras.utils.vis_utils import plot_model
-from sklearn.metrics import roc_curve, auc
+from sklearn.metrics import roc_curve, auc, confusion_matrix
 from sklearn import manifold
 from mpl_toolkits.mplot3d import Axes3D
 class CntLoss(Layer):
@@ -68,10 +68,9 @@ class Net_models():
         self.generator = self.build_generator()
         self.feature = self.build_featrue()
         self.discriminator = self.build_discriminator(self.feature)
-        self.discriminator.compile(optimizer = 'adam',loss = self.wasserstein_loss)
+        self.discriminator.compile(optimizer = 'adam',loss = self.wasserstein_loss, metrics=['accuracy'])
         self.discriminator.trainable = False
     def build_model(self):
-        
         real_img = Input(shape =self.img_shape)
         vaild = self.discriminator(real_img)
         gan_image = self.generator(real_img)
@@ -167,19 +166,23 @@ class Net_models():
         valid = np.ones((batch_size,1))*(0.9)+(0.1/2)#更改過本來為+0.1
         fake = -np.ones((batch_size,1))*(0.9)+(0.1/2)
         myGene = trainGenerator()
+        history_loss = []
+        history_acc = []
         for epoch in range(epochs):
             for _ in range(self.n_critic):
                 x = myGene.__next__()
                 fake_images = self.generator.predict(x)
-                d_loss_real = self.discriminator.train_on_batch(x,valid)
-                d_loss_fake = self.discriminator.train_on_batch(fake_images,fake)
-                d_loss = 0.5*np.add(d_loss_real,d_loss_fake)
+                d_real = self.discriminator.train_on_batch(x,valid)
+                d_fake = self.discriminator.train_on_batch(fake_images,fake)
+                d_loss = 0.5*np.add(d_fake[0], d_real[0])
+                history_loss.append(d_loss)
+                history_acc.append(d_fake[1])
                 for layer in self.discriminator.layers:
                     weights = layer.get_weights()
                     weights = [np.clip(weight, -self.clip_value,
                                       self.clip_value) for weight in weights]
                     layer.set_weights(weights)
-            g_loss = gan_trainer.train_on_batch(x,[valid,valid,fake])
+            g_loss = gan_trainer.train_on_batch(x, valid)
             if epoch % sample_interval ==0:
                 lr_g = K.get_value(gan_trainer.optimizer.lr)
                 lr_d = K.get_value(self.discriminator.optimizer.lr)
@@ -194,12 +197,31 @@ class Net_models():
                 print('lr_d_after:',lr_d_after)
                 self.sample_images(epoch,x)
                 print(f'niter: {epoch+1}, g_loss: {g_loss}, d_loss: {d_loss}')
-            
+        self.generator.save('my_IWGAN')
         test_data = test_image()
-        x_test,y_test = test_data.__next__()
+        x_test, y_test = test_data.__next__()
         
-        scores,gan_images = self.evaluation(self.feature,self.generator,x_test,y_test)
-        self.plot_all_image(scores,y_test,x_test,gan_images)
+        scores, gan_images = self.evaluation(self.feature, self.generator, x_test, y_test)
+        self.plot_all_image(scores, y_test, x_test, gan_images)
+
+        plt.plot(history_loss)
+        plt.title('Model loss')
+        plt.ylabel('Loss')
+        plt.xlabel('Epoch')
+        plt.legend(['Train', 'Valid'], loc='upper right')
+        plt.savefig('./result/loss.png')
+        
+        plt.show()
+        
+        plt.plot(history_acc)
+        plt.title('Model accuracy')
+        plt.ylabel('Accuracy')
+        plt.xlabel('Epoch')
+        plt.legend(['Train', 'Valid'], loc='upper right')
+        plt.savefig('./result/acc.png')
+
+        plt.show()
+
     def CalculationLR(self,epoch,lr_g,lr_d):
         # if epoch == 200 or epoch == 300 or epoch == 400 or epoch == 500 or epoch == 600 or epoch == 700:
         lr_g = 0.5*lr_g
@@ -236,11 +258,21 @@ class Net_models():
         zero_number = []
         plt.figure(1,figsize=(14, 5))
         plt.scatter(range(len(score)),score,c = ['pink'if x == 1 else 'skyblue' for x in labels])
+        tn = fp = fn = tp = 0
         for i in range(len(score)):
             if labels[i] == 1:
                 one_number = np.append(one_number,score[i])
+                if score[i] >= 0.55:
+                    tn += 1
+                elif score[i] < 0.55:
+                    fp += 1
             else:
-                zero_number = np.append(zero_number,score[i])
+                zero_number = np.append(zero_number,score[i])   
+                if score[i] >= 0.55:
+                    fn += 1
+                elif score[i] < 0.55:
+                    tp += 1
+        print("TP, FN, TN, FP: {}, {}, {}, {}".format(tp, fn, tn, fp))
         plt.figure(2,figsize=(7,7))
         plt.hist(one_number,label='abnormal',stacked = True,density = True,
                  alpha = 0.5,color = 'r')
@@ -285,10 +317,9 @@ class Net_models():
         plt.savefig("image_test_no_LR/A_real_images_%d.png" % epoch)
         plt.close()
 if __name__ == '__main__':
-    for i in range(10):
-        UNET_GAN = Net_models()
-        feature = UNET_GAN.feature
-        gan_model = UNET_GAN.build_model()
-        # UNET_GAN.generator.summary()
-        # plot_model(gan_model,to_file = './Test_model/gans_model.png',show_shapes=True)
-        UNET_GAN.train(batch_size = 32, epochs = 1000, sample_interval = 100)
+    UNET_GAN = Net_models()
+    feature = UNET_GAN.feature
+    gan_model = UNET_GAN.build_model()
+    # UNET_GAN.generator.summary()
+    # plot_model(gan_model,to_file = './Test_model/gans_model.png',show_shapes=True)
+    UNET_GAN.train(batch_size = 32, epochs = 5, sample_interval = 100)
